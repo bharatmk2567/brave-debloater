@@ -17,9 +17,11 @@
 #
 # Usage:
 #   chmod +x debloat-brave-macos.sh
-#   sudo ./debloat-brave-macos.sh           # Apply debloat
-#   sudo ./debloat-brave-macos.sh --dry-run # Preview what would change
-#   sudo ./debloat-brave-macos.sh --restore # Restore from a previous backup
+#   sudo ./debloat-brave-macos.sh                        # Apply debloat (stable)
+#   sudo ./debloat-brave-macos.sh --channel beta         # Apply debloat for Beta
+#   sudo ./debloat-brave-macos.sh --channel nightly      # Apply debloat for Nightly
+#   sudo ./debloat-brave-macos.sh --dry-run              # Preview what would change
+#   sudo ./debloat-brave-macos.sh --restore              # Restore from a previous backup
 #
 
 set -uo pipefail
@@ -30,7 +32,52 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-BROWSER_BUNDLE_ID="com.brave.Browser"
+# --- Channel detection: parse --channel before anything else ---
+CHANNEL="stable"
+_args=("$@")
+for (( _i=0; _i<${#_args[@]}; _i++ )); do
+    case "${_args[$_i]}" in
+        --channel=*)
+            CHANNEL="${_args[$_i]#*=}"
+            if [[ -z "$CHANNEL" ]]; then
+                echo "Error: --channel requires a value (stable|beta|nightly). See --help."
+                exit 1
+            fi
+            ;;
+        --channel)
+            if (( _i+1 < ${#_args[@]} )) && [[ "${_args[$(( _i+1 ))]}" != -* ]]; then
+                CHANNEL="${_args[$(( _i+1 ))]}"
+                (( _i++ ))
+            else
+                echo "Error: --channel requires a value (stable|beta|nightly). See --help."
+                exit 1
+            fi
+            ;;
+    esac
+done
+
+case "$CHANNEL" in
+    beta)
+        BROWSER_BUNDLE_ID="com.brave.Browser.Beta"
+        BRAVE_APP_NAME="Brave Browser Beta"
+        BRAVE_PROCESS_NAME="Brave Browser Beta"
+        ;;
+    nightly)
+        BROWSER_BUNDLE_ID="com.brave.Browser.Nightly"
+        BRAVE_APP_NAME="Brave Browser Nightly"
+        BRAVE_PROCESS_NAME="Brave Browser Nightly"
+        ;;
+    stable)
+        BROWSER_BUNDLE_ID="com.brave.Browser"
+        BRAVE_APP_NAME="Brave Browser"
+        BRAVE_PROCESS_NAME="Brave Browser"
+        ;;
+    *)
+        echo "Unknown channel: $CHANNEL. Valid options: stable, beta, nightly"
+        exit 1
+        ;;
+esac
+
 if [[ -n "${SUDO_USER:-}" ]]; then
     REAL_HOME="$(eval echo ~${SUDO_USER})"
 else
@@ -70,11 +117,18 @@ declare -a POLICIES=(
 )
 
 print_header() {
+    local line1="Brave Browser Debloater for macOS (${BRAVE_APP_NAME})"
+    local line2="Disables bloat to mimic Brave Origin experience"
+    local max_len=$(( ${#line1} > ${#line2} ? ${#line1} : ${#line2} ))
+    local inner=$(( max_len + 4 ))
+    local border
+    printf -v border '%*s' "$inner" ''
+    border="${border// /═}"
     echo -e "${CYAN}"
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║          Brave Browser Debloater for macOS                   ║"
-    echo "║     Disables bloat to mimic Brave Origin experience          ║"
-    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo "╔${border}╗"
+    printf "║  %-$(( inner - 4 ))s  ║\n" "${line1}"
+    printf "║  %-$(( inner - 4 ))s  ║\n" "${line2}"
+    echo "╚${border}╝"
     echo -e "${NC}"
 }
 
@@ -98,36 +152,36 @@ check_sudo() {
 }
 
 check_brave_installed() {
-    if ! osascript -e 'id of app "Brave Browser"' &>/dev/null; then
-        print_error "Brave Browser does not appear to be installed."
-        echo "   Please install Brave from https://brave.com and run it at least once."
+    if ! osascript -e "id of app \"${BRAVE_APP_NAME}\"" &>/dev/null; then
+        print_error "${BRAVE_APP_NAME} does not appear to be installed."
+        echo "   Please install it from https://brave.com and run it at least once."
         exit 1
     fi
-    print_success "Brave Browser is installed."
+    print_success "${BRAVE_APP_NAME} is installed."
 }
 
 warn_close_brave() {
-    if pgrep -x "Brave Browser" &>/dev/null; then
-        print_warn "Brave Browser is currently running."
+    if pgrep -x "${BRAVE_PROCESS_NAME}" &>/dev/null; then
+        print_warn "${BRAVE_APP_NAME} is currently running."
         echo ""
-        read -rp "   Please close Brave completely and press [Enter] to continue..."
-        if pgrep -x "Brave Browser" &>/dev/null; then
-            print_error "Brave is still running. Please close it and try again."
+        read -rp "   Please close ${BRAVE_APP_NAME} completely and press [Enter] to continue..."
+        if pgrep -x "${BRAVE_PROCESS_NAME}" &>/dev/null; then
+            print_error "${BRAVE_APP_NAME} is still running. Please close it and try again."
             exit 1
         fi
     fi
-    print_success "Brave Browser is not running."
+    print_success "${BRAVE_APP_NAME} is not running."
 }
 
 backup_existing() {
     mkdir -p "${BACKUP_DIR}/${TIMESTAMP}"
     if [[ -f "${MANAGED_PLIST}" ]]; then
-        cp "${MANAGED_PLIST}" "${BACKUP_DIR}/${TIMESTAMP}/managed_com.brave.Browser.plist"
-        print_success "Backed up managed Brave plist."
+        cp "${MANAGED_PLIST}" "${BACKUP_DIR}/${TIMESTAMP}/managed_${BROWSER_BUNDLE_ID}.plist"
+        print_success "Backed up managed ${BRAVE_APP_NAME} plist."
     fi
     if [[ -f "${USER_PLIST}" ]]; then
-        cp "${USER_PLIST}" "${BACKUP_DIR}/${TIMESTAMP}/com.brave.Browser.plist"
-        print_success "Backed up user Brave plist."
+        cp "${USER_PLIST}" "${BACKUP_DIR}/${TIMESTAMP}/${BROWSER_BUNDLE_ID}.plist"
+        print_success "Backed up user ${BRAVE_APP_NAME} plist."
     fi
     print_info "Backups saved to: ${BACKUP_DIR}/${TIMESTAMP}"
 }
@@ -216,7 +270,7 @@ apply_policies() {
 print_summary() {
     echo ""
     echo -e "${GREEN}══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${GREEN}  Debloating complete!${NC}"
+    echo -e "${GREEN}  Debloating complete! (${BRAVE_APP_NAME})${NC}"
     echo -e "${GREEN}══════════════════════════════════════════════════════════════${NC}"
     echo ""
     echo "The following features have been DISABLED:"
@@ -238,13 +292,13 @@ print_summary() {
     echo -e "${YELLOW}Tip:${NC} To disable Leo AI without a policy, go to"
     echo "  brave://settings/leo and turn it off manually."
     echo ""
-    echo -e "${YELLOW}IMPORTANT:${NC} Please restart Brave Browser for all changes to take effect."
+    echo -e "${YELLOW}IMPORTANT:${NC} Please restart ${BRAVE_APP_NAME} for all changes to take effect."
     echo ""
     echo "You can verify policies are active by visiting:"
     echo "  brave://policy"
     echo ""
     print_info "To undo these changes, run:"
-    echo "  sudo ./debloat-brave-macos.sh --restore"
+    echo "  sudo ./debloat-brave-macos.sh --channel ${CHANNEL} --restore"
     echo ""
     echo -e "${YELLOW}Note:${NC} You may see 'Managed by your organization' in Brave's menu."
     echo "      This is normal and expected when policy values are active."
@@ -253,17 +307,22 @@ print_summary() {
 
 restore_backup() {
     echo ""
-    print_info "Available backups:"
+    print_info "Available backups for ${BRAVE_APP_NAME}:"
     if [[ ! -d "${BACKUP_DIR}" ]]; then
         print_error "No backup directory found."
         exit 1
     fi
     local backups=()
     while IFS= read -r -d '' dir; do
-        backups+=("$(basename "$dir")")
+        local bname
+        bname="$(basename "$dir")"
+        # Only include backups that contain files for the current channel
+        if compgen -G "${BACKUP_DIR}/${bname}/*${BROWSER_BUNDLE_ID}*" > /dev/null 2>&1; then
+            backups+=("${bname}")
+        fi
     done < <(find "${BACKUP_DIR}" -maxdepth 1 -mindepth 1 -type d -print0 | sort -z)
     if [[ ${#backups[@]} -eq 0 ]]; then
-        print_error "No backups found."
+        print_error "No backups found for ${BRAVE_APP_NAME}."
         exit 1
     fi
     echo ""
@@ -280,33 +339,34 @@ restore_backup() {
     fi
     local selected="${backups[$((choice-1))]}"
     local restore_path="${BACKUP_DIR}/${selected}"
-    print_warn "This will restore Brave policies from backup: ${selected}"
+    print_warn "This will restore ${BRAVE_APP_NAME} policies from backup: ${selected}"
     read -rp "Are you sure? [y/N]: " confirm
     if [[ "$confirm" =~ ^[Yy]$ ]]; then
         local restored=false
-        if [[ -f "${restore_path}/managed_com.brave.Browser.plist" ]]; then
+        if [[ -f "${restore_path}/managed_${BROWSER_BUNDLE_ID}.plist" ]]; then
             mkdir -p "$(dirname "${MANAGED_PLIST}")"
-            cp "${restore_path}/managed_com.brave.Browser.plist" "${MANAGED_PLIST}"
+            cp "${restore_path}/managed_${BROWSER_BUNDLE_ID}.plist" "${MANAGED_PLIST}"
             chmod 644 "${MANAGED_PLIST}"
             chown root:wheel "${MANAGED_PLIST}"
             print_success "Restored managed plist preferences."
             restored=true
         else
-            # If no managed backup exists, remove managed plist to clear policies
+            # Backup was made for this channel but no managed plist existed at backup time —
+            # remove the current managed plist to restore that "no policies" state.
             if [[ -f "${MANAGED_PLIST}" ]]; then
                 rm -f "${MANAGED_PLIST}"
-                print_success "Removed managed policies."
+                print_success "Removed managed policies (none existed at backup time)."
                 restored=true
             fi
         fi
-        if [[ -f "${restore_path}/com.brave.Browser.plist" ]]; then
-            cp "${restore_path}/com.brave.Browser.plist" "${USER_PLIST}"
+        if [[ -f "${restore_path}/${BROWSER_BUNDLE_ID}.plist" ]]; then
+            cp "${restore_path}/${BROWSER_BUNDLE_ID}.plist" "${USER_PLIST}"
             print_success "Restored user plist preferences."
             restored=true
         fi
         killall cfprefsd 2>/dev/null || true
         if [[ "$restored" == "true" ]]; then
-            print_success "Restore complete. Please restart Brave."
+            print_success "Restore complete. Please restart ${BRAVE_APP_NAME}."
         else
             print_warn "Nothing to restore from this backup."
         fi
@@ -317,10 +377,10 @@ restore_backup() {
 
 uninstall_policies() {
     if [[ ! -f "${MANAGED_PLIST}" ]]; then
-        print_info "No managed policies plist found. Nothing to remove."
+        print_info "No managed policies plist found for ${BRAVE_APP_NAME}. Nothing to remove."
         return
     fi
-    print_warn "This will remove ALL managed policies from Brave."
+    print_warn "This will remove ALL managed policies from ${BRAVE_APP_NAME}."
     read -rp "Are you sure? [y/N]: " confirm
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
         print_info "Uninstall cancelled."
@@ -331,7 +391,7 @@ uninstall_policies() {
     cleanup_user_prefs
     killall cfprefsd 2>/dev/null || true
     echo ""
-    print_success "All policies removed. Please restart Brave."
+    print_success "All policies removed. Please restart ${BRAVE_APP_NAME}."
 }
 
 show_help() {
@@ -339,17 +399,29 @@ show_help() {
 Brave Browser Debloater for macOS
 
 Usage:
-  sudo ./debloat-brave-macos.sh              Apply debloat policies
-  sudo ./debloat-brave-macos.sh --dry-run    Preview what would change (no modifications)
-  sudo ./debloat-brave-macos.sh --restore    Restore from a previous backup
-  sudo ./debloat-brave-macos.sh --uninstall  Remove all managed policies
-  ./debloat-brave-macos.sh --help            Show this help message
+  sudo ./debloat-brave-macos.sh                        Apply debloat (stable)
+  sudo ./debloat-brave-macos.sh --channel beta         Apply debloat for Brave Beta
+  sudo ./debloat-brave-macos.sh --channel nightly      Apply debloat for Brave Nightly
+  sudo ./debloat-brave-macos.sh --dry-run              Preview what would change (no modifications)
+  sudo ./debloat-brave-macos.sh --restore              Restore from a previous backup
+  sudo ./debloat-brave-macos.sh --uninstall            Remove all managed policies
+  ./debloat-brave-macos.sh --help                      Show this help message
+
+Channel-specific operations:
+  sudo ./debloat-brave-macos.sh --channel beta --dry-run
+  sudo ./debloat-brave-macos.sh --channel nightly --restore
+  sudo ./debloat-brave-macos.sh --channel beta --uninstall
+
+Channels:
+  stable   Brave Browser              (com.brave.Browser)
+  beta     Brave Browser Beta         (com.brave.Browser.Beta)
+  nightly  Brave Browser Nightly      (com.brave.Browser.Nightly)
 
 This script disables Brave's non-core features by applying macOS managed
 policies with the CORRECT data types via PlistBuddy.
 
 CRITICAL: Brave boolean policies MUST be written to:
-  /Library/Managed Preferences/com.brave.Browser.plist
+  /Library/Managed Preferences/<bundle-id>.plist
 Writing them via `defaults write` to the user plist with -bool causes
 Brave to crash on startup. This script uses the proper managed path.
 
@@ -368,7 +440,22 @@ EOF
 }
 
 main() {
-    case "${1:-}" in
+    # Strip --channel [value] from positional args for the main case switch
+    local filtered_args=()
+    local _skip=false
+    for arg in "$@"; do
+        if [[ "$_skip" == "true" ]]; then
+            _skip=false
+            continue
+        fi
+        case "$arg" in
+            --channel=*) ;;
+            --channel)   _skip=true ;;
+            *)           filtered_args+=("$arg") ;;
+        esac
+    done
+
+    case "${filtered_args[0]:-}" in
         --restore)
             check_sudo
             restore_backup

@@ -159,3 +159,36 @@ You can restore from these backups using the `--restore` (macOS) or `-Restore` (
 - [Brave Support — Group Policy](https://support.brave.app/hc/en-us/articles/360039248271-Group-Policy)
 - [Brave Group Policy Templates](https://support.brave.com/hc/en-us/articles/360039248271)
 
+---
+
+## AI-Generated Code
+
+This project includes code that was generated or assisted by artificial intelligence (AI) tools, including small language models.
+
+### Contributions
+
+We welcome AI-assisted contributions via pull requests. When submitting AI-generated code:
+
+- **Manual review is required.** All code must be reviewed by a human maintainer before merging.
+- **You are responsible** for any code you submit, regardless of how it was generated.
+- **Test your changes.** Ensure scripts run correctly on the target platform before submitting.
+- **Explain the logic.** PR descriptions should explain what the code does and why, especially for complex changes.
+
+### Using AI for Review
+
+AI tools may be used to assist with code review (e.g., catching syntax errors, suggesting improvements, or explaining changes). However:
+
+- **Human oversight is mandatory.** AI suggestions should be verified and validated by a human reviewer.
+- **Keep an eye on what is changing.** Reviewers must understand and approve every line that is modified.
+- **AI can hallucinate.** Always verify that suggestions are accurate, safe, and appropriate for the codebase.
+
+---
+
+## Disclaimer
+
+**Brave**, **Brave Browser**, **Brave Origin**, **Brave Search**, **Brave Shields**, **Brave Rewards**, **Brave Talk**, **Brave VPN**, **Brave Wallet**, **Brave News**, **Leo**, **Speedreader**, and all related product names, logos, and trademarks are the property of **Brave Software, Inc.** and are used here for identification purposes only.
+
+This project is **not affiliated with, endorsed by, or sponsored by** Brave Software, Inc. in any way.
+
+These scripts are independent community tools that configure existing, officially documented Group Policy settings. They do not modify, reverse-engineer, or redistribute any Brave software.
+

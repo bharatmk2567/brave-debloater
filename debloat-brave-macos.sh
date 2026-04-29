@@ -88,33 +88,69 @@ MANAGED_PLIST="/Library/Managed Preferences/${BROWSER_BUNDLE_ID}.plist"
 BACKUP_DIR="${REAL_HOME}/.brave-debloat-backups"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
-# Policy definitions with CORRECT macOS types.
-# Boolean policies are written to /Library/Managed Preferences/ via PlistBuddy.
-# Integer policies are also written there.
-#
-# NOTE: Some policies cause Brave to crash with SIGTRAP/CHECK failures even
-# when written to the managed plist with correct types. These have been removed:
-#   BraveAIChatEnabled:bool:false  - Leo AI is deeply integrated; disabling crashes
-#   SyncDisabled:bool:true          - Breaks browser state restoration on launch
-#   BraveWalletDisabled:bool:true   - May trigger CHECK assertion in v147+
-#   PromotionsEnabled:bool:false     - May trigger assertion failures
-#   BackgroundModeEnabled:bool:false - May cause startup instability
-#   BrowserSignin:int:0             - Affects core sign-in infrastructure
-declare -a POLICIES=(
-    # --- Boolean policies (feature toggles) ---
-    "BraveRewardsDisabled:bool:true"
-    "BraveVPNDisabled:bool:true"
-    "BraveWalletDisabled:bool:true"
-    "BraveNewsDisabled:bool:true"
-    "BraveTalkDisabled:bool:true"
-    "TorDisabled:bool:true"
-    "BraveWaybackMachineEnabled:bool:false"
-    "BraveP3AEnabled:bool:false"
-    "BraveStatsPingEnabled:bool:false"
-    "BraveWebDiscoveryEnabled:bool:false"
-    "BraveSpeedreaderEnabled:bool:false"
-    "MetricsReportingEnabled:bool:false"
+# Available policies with descriptions and safety flags.
+# Format: "Key:Type:Value:Description:Safe"
+# Safe="true" means it can be offered in interactive mode.
+# Safe="false" means it is excluded from interactive (known crash-causer).
+declare -a ALL_POLICIES=(
+    "BraveRewardsDisabled:bool:true:Brave Rewards & Ads:true"
+    "BraveVPNDisabled:bool:true:Brave VPN:true"
+    "BraveWalletDisabled:bool:true:Brave Wallet & Web3:true"
+    "BraveNewsDisabled:bool:true:Brave News:true"
+    "BraveTalkDisabled:bool:true:Brave Talk:true"
+    "TorDisabled:bool:true:Tor private windows:true"
+    "BraveWaybackMachineEnabled:bool:false:Wayback Machine integration:true"
+    "BraveP3AEnabled:bool:false:Telemetry (P3A):true"
+    "BraveStatsPingEnabled:bool:false:Daily usage ping:true"
+    "BraveWebDiscoveryEnabled:bool:false:Web Discovery Project:true"
+    "BraveSpeedreaderEnabled:bool:false:Speedreader:true"
+    "MetricsReportingEnabled:bool:false:Metrics reporting:true"
 )
+
+# Policies that will actually be applied (populated in interactive or default mode)
+declare -a POLICIES=()
+
+# ---------------------------------------------------------------------------
+# Interactive mode helpers
+# ---------------------------------------------------------------------------
+
+run_interactive() {
+    echo ""
+    echo -e "${CYAN}Interactive Mode${NC}"
+    echo "Choose which features to disable. Press Enter to accept the default [Y/n]."
+    echo ""
+
+    local entry key dtype value desc safe
+    for entry in "${ALL_POLICIES[@]}"; do
+        IFS=':' read -r key dtype value desc safe <<< "$entry"
+
+        if [[ "$safe" != "true" ]]; then
+            continue
+        fi
+
+        local default_yn="Y"
+        local prompt="Disable ${desc}? [Y/n] "
+        read -rp "$prompt" choice
+        choice="${choice:-$default_yn}"
+
+        if [[ "$choice" =~ ^[Yy]$ ]]; then
+            POLICIES+=("${key}:${dtype}:${value}")
+            echo -e "  ${GREEN}✓${NC} Will disable: ${desc}"
+        else
+            echo -e "  ${YELLOW}✗${NC} Skipped: ${desc}"
+        fi
+        echo ""
+    done
+
+    if [[ ${#POLICIES[@]} -eq 0 ]]; then
+        print_warn "No policies selected. Nothing to apply."
+        exit 0
+    fi
+
+    echo ""
+    echo -e "${CYAN}Selected ${#POLICIES[@]} policies to apply.${NC}"
+    echo ""
+}
 
 print_header() {
     local line1="Brave Browser Debloater for macOS (${BRAVE_APP_NAME})"
@@ -403,6 +439,7 @@ Usage:
   sudo ./debloat-brave-macos.sh --channel beta         Apply debloat for Brave Beta
   sudo ./debloat-brave-macos.sh --channel nightly      Apply debloat for Brave Nightly
   sudo ./debloat-brave-macos.sh --dry-run              Preview what would change (no modifications)
+  sudo ./debloat-brave-macos.sh --interactive          Choose which features to disable
   sudo ./debloat-brave-macos.sh --restore              Restore from a previous backup
   sudo ./debloat-brave-macos.sh --uninstall            Remove all managed policies
   ./debloat-brave-macos.sh --help                      Show this help message
@@ -473,11 +510,31 @@ main() {
             apply_policies true
             exit 0
             ;;
+        --interactive)
+            print_header
+            check_sudo
+            check_brave_installed
+            warn_close_brave
+            run_interactive
+            backup_existing
+            cleanup_user_prefs
+            apply_policies false
+            print_summary
+            exit 0
+            ;;
         --help|-h)
             show_help
             exit 0
             ;;
     esac
+
+    # Default mode: apply all safe policies
+    for entry in "${ALL_POLICIES[@]}"; do
+        IFS=':' read -r key dtype value desc safe <<< "$entry"
+        if [[ "$safe" == "true" ]]; then
+            POLICIES+=("${key}:${dtype}:${value}")
+        fi
+    done
 
     print_header
     check_sudo

@@ -28,7 +28,8 @@
 .USAGE
     Right-click PowerShell -> Run as Administrator
     Set-ExecutionPolicy -Scope Process RemoteSigned
-    .\debloat-brave-windows.ps1                # Apply debloat
+    .\debloat-brave-windows.ps1                # Apply debloat (all features)
+    .\debloat-brave-windows.ps1 -Interactive   # Choose which features to disable
     .\debloat-brave-windows.ps1 -DryRun       # Preview what would change
     .\debloat-brave-windows.ps1 -Restore      # Restore from a previous backup
     .\debloat-brave-windows.ps1 -Uninstall    # Remove all managed policies
@@ -40,6 +41,7 @@ param(
     [switch]$Restore,
     [switch]$DryRun,
     [switch]$Uninstall,
+    [switch]$Interactive,
     [switch]$Help
 )
 
@@ -50,31 +52,26 @@ $RegPath = "HKLM:\SOFTWARE\Policies\BraveSoftware\Brave"
 $BackupDir = Join-Path $env:USERPROFILE ".brave-debloat-backups"
 $Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 
-# Policy definitions: Name -> @{ Value = ...; Type = ... }
-# *Disabled keys: 1 = disabled
-# *Enabled keys:  0 = disabled
-#
-# NOTE: Policies removed because they crash Brave v147+ on macOS and may
-# cause issues on Windows too (or are not part of the Brave Origin spec):
-#   BraveAIChatEnabled          - Use brave://settings/leo to disable instead
-#   SyncDisabled                - Breaks browser state restoration
-#   PromotionsEnabled           - Not in Brave Origin spec
-#   BackgroundModeEnabled       - Not in Brave Origin spec
-#   BrowserSignin               - Not in Brave Origin spec
-$Policies = [ordered]@{
-    BraveRewardsDisabled        = @{ Value = 1;  Type = "DWord" }
-    BraveWalletDisabled         = @{ Value = 1;  Type = "DWord" }
-    BraveVPNDisabled            = @{ Value = 1;  Type = "DWord" }
-    BraveNewsDisabled           = @{ Value = 1;  Type = "DWord" }
-    BraveTalkDisabled           = @{ Value = 1;  Type = "DWord" }
-    TorDisabled                 = @{ Value = 1;  Type = "DWord" }
-    BraveWaybackMachineEnabled  = @{ Value = 0;  Type = "DWord" }
-    BraveP3AEnabled             = @{ Value = 0;  Type = "DWord" }
-    BraveStatsPingEnabled       = @{ Value = 0;  Type = "DWord" }
-    BraveWebDiscoveryEnabled    = @{ Value = 0;  Type = "DWord" }
-    BraveSpeedreaderEnabled     = @{ Value = 0;  Type = "DWord" }
-    MetricsReportingEnabled     = @{ Value = 0;  Type = "DWord" }
+# All available policies with descriptions and safety flags.
+# Safe=$true means offered in interactive mode.
+# Safe=$false means excluded (known crash-causer or not in Brave Origin spec).
+$AllPolicies = [ordered]@{
+    BraveRewardsDisabled        = @{ Value = 1;  Type = "DWord"; Desc = "Brave Rewards & Ads"; Safe = $true }
+    BraveWalletDisabled         = @{ Value = 1;  Type = "DWord"; Desc = "Brave Wallet & Web3"; Safe = $true }
+    BraveVPNDisabled            = @{ Value = 1;  Type = "DWord"; Desc = "Brave VPN"; Safe = $true }
+    BraveNewsDisabled           = @{ Value = 1;  Type = "DWord"; Desc = "Brave News"; Safe = $true }
+    BraveTalkDisabled           = @{ Value = 1;  Type = "DWord"; Desc = "Brave Talk"; Safe = $true }
+    TorDisabled                 = @{ Value = 1;  Type = "DWord"; Desc = "Tor private windows"; Safe = $true }
+    BraveWaybackMachineEnabled  = @{ Value = 0;  Type = "DWord"; Desc = "Wayback Machine integration"; Safe = $true }
+    BraveP3AEnabled             = @{ Value = 0;  Type = "DWord"; Desc = "Telemetry (P3A)"; Safe = $true }
+    BraveStatsPingEnabled       = @{ Value = 0;  Type = "DWord"; Desc = "Daily usage ping"; Safe = $true }
+    BraveWebDiscoveryEnabled    = @{ Value = 0;  Type = "DWord"; Desc = "Web Discovery Project"; Safe = $true }
+    BraveSpeedreaderEnabled     = @{ Value = 0;  Type = "DWord"; Desc = "Speedreader"; Safe = $true }
+    MetricsReportingEnabled     = @{ Value = 0;  Type = "DWord"; Desc = "Metrics reporting"; Safe = $true }
 }
+
+# Policies that will actually be applied (populated in interactive or default mode)
+$Policies = [ordered]@{}
 
 function Write-Header {
     Write-Host ""
@@ -100,7 +97,6 @@ function Test-BraveInstalled {
     foreach ($p in $paths) {
         if (Test-Path $p) { return $true }
     }
-    # Also check via registry for uninstall entry
     $uninstall = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*", "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue |
         Where-Object { $_.DisplayName -like "Brave Browser*" }
     return ($null -ne $uninstall)
@@ -109,6 +105,41 @@ function Test-BraveInstalled {
 function Test-BraveRunning {
     $proc = Get-Process -Name "brave" -ErrorAction SilentlyContinue
     return ($null -ne $proc)
+}
+
+function Run-Interactive {
+    Write-Host ""
+    Write-Host "Interactive Mode" -ForegroundColor Cyan
+    Write-Host "Choose which features to disable. Press Enter to accept the default [Y/n]."
+    Write-Host ""
+
+    foreach ($policy in $AllPolicies.GetEnumerator()) {
+        $name = $policy.Key
+        $desc = $policy.Value.Desc
+        $safe = $policy.Value.Safe
+
+        if (-not $safe) { continue }
+
+        $choice = Read-Host "Disable ${desc}? [Y/n]"
+        if (-not $choice) { $choice = "Y" }
+
+        if ($choice -match '^[Yy]$') {
+            $Policies[$name] = $policy.Value
+            Write-Host "  [OK] Will disable: $desc" -ForegroundColor Green
+        } else {
+            Write-Host "  [SKIPPED] $desc" -ForegroundColor Yellow
+        }
+        Write-Host ""
+    }
+
+    if ($Policies.Count -eq 0) {
+        Write-Host "WARNING: No policies selected. Nothing to apply." -ForegroundColor Yellow
+        exit 0
+    }
+
+    Write-Host ""
+    Write-Host "Selected $($Policies.Count) policies to apply." -ForegroundColor Cyan
+    Write-Host ""
 }
 
 function Backup-Registry {
@@ -176,16 +207,10 @@ function Show-Summary {
     Write-Host "  ===============================================================" -ForegroundColor Green
     Write-Host ""
     Write-Host "The following features have been DISABLED:"
-    Write-Host "  * Brave News"
-    Write-Host "  * Brave Rewards & Ads"
-    Write-Host "  * Brave Wallet & Web3"
-    Write-Host "  * Speedreader"
-    Write-Host "  * Telemetry (P3A, daily usage ping, metrics)"
-    Write-Host "  * Brave Talk"
-    Write-Host "  * Tor private windows"
-    Write-Host "  * Brave VPN"
-    Write-Host "  * Wayback Machine integration"
-    Write-Host "  * Web Discovery Project"
+    foreach ($policy in $Policies.GetEnumerator()) {
+        $desc = $policy.Value.Desc
+        Write-Host "  * $desc"
+    }
     Write-Host ""
     Write-Host "SKIPPED (crash-causing on some versions):" -ForegroundColor Yellow
     Write-Host "  * Leo AI Chat (policy can crash Brave)" -ForegroundColor Yellow
@@ -294,11 +319,12 @@ function Show-Help {
 Brave Browser Debloater for Windows
 
 Usage:
-  .\debloat-brave-windows.ps1              Apply debloat policies
-  .\debloat-brave-windows.ps1 -DryRun     Preview what would change
-  .\debloat-brave-windows.ps1 -Restore    Restore from a previous backup
-  .\debloat-brave-windows.ps1 -Uninstall  Remove all managed policies
-  .\debloat-brave-windows.ps1 -Help       Show this help message
+  .\debloat-brave-windows.ps1              Apply debloat policies (all features)
+  .\debloat-brave-windows.ps1 -Interactive  Choose which features to disable
+  .\debloat-brave-windows.ps1 -DryRun      Preview what would change
+  .\debloat-brave-windows.ps1 -Restore     Restore from a previous backup
+  .\debloat-brave-windows.ps1 -Uninstall   Remove all managed policies
+  .\debloat-brave-windows.ps1 -Help        Show this help message
 
 This script disables Brave's non-core features by writing Group Policy
 registry entries under HKLM:\SOFTWARE\Policies\BraveSoftware\Brave.
@@ -368,9 +394,32 @@ if (Test-BraveRunning) {
 }
 Write-Host "[OK] Brave Browser is not running." -ForegroundColor Green
 
+if ($Interactive) {
+    Run-Interactive
+    Write-Host "Creating backup of existing policies..." -ForegroundColor Cyan
+    New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
+    Backup-Registry
+    Apply-Policies
+    Show-Summary
+    exit 0
+}
+
 if ($DryRun) {
+    # In dry-run mode, populate all safe policies for preview
+    foreach ($policy in $AllPolicies.GetEnumerator()) {
+        if ($policy.Value.Safe) {
+            $Policies[$policy.Key] = $policy.Value
+        }
+    }
     Apply-Policies -DryRun
     exit 0
+}
+
+# Default mode: apply all safe policies
+foreach ($policy in $AllPolicies.GetEnumerator()) {
+    if ($policy.Value.Safe) {
+        $Policies[$policy.Key] = $policy.Value
+    }
 }
 
 Write-Host "Creating backup of existing policies..." -ForegroundColor Cyan

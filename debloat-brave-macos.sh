@@ -300,6 +300,42 @@ apply_policies() {
         killall cfprefsd 2>/dev/null || true
         echo ""
         print_success "All policies applied."
+        
+        # Install configuration profile for persistence across reboots
+        echo ""
+        print_info "Installing configuration profile for persistence..."
+        install_profile
+    fi
+}
+
+install_profile() {
+    local script_dir="$(cd "$(dirname "$0")" && pwd)"
+    local profile_path="${script_dir}/debloat-brave.mobileconfig"
+    
+    if [[ ! -f "$profile_path" ]]; then
+        print_warn "Configuration profile not found at: $profile_path"
+        print_info "Policies applied but may not persist after reboot."
+        print_info "To make permanent, copy debloat-brave.mobileconfig to the same directory as this script."
+        return 1
+    fi
+    
+    # Remove existing profile if present
+    if profiles show 2>/dev/null | grep -q "com.brave.debloat.profile"; then
+        print_info "Removing existing profile..."
+        profiles remove -identifier "com.brave.debloat.profile" 2>/dev/null || true
+    fi
+    
+    if profiles install -path "$profile_path" 2>/dev/null; then
+        print_success "Configuration profile installed successfully."
+        print_success "Policies will persist across reboots."
+        return 0
+    else
+        print_warn "Could not install configuration profile via CLI."
+        print_info "You can install it manually:"
+        print_info "  1. Open System Settings > Privacy & Security > Profiles"
+        print_info "  2. Double-click: $profile_path"
+        print_info "  3. Click 'Install' and authenticate"
+        return 1
     fi
 }
 
@@ -333,8 +369,10 @@ print_summary() {
     echo "You can verify policies are active by visiting:"
     echo "  brave://policy"
     echo ""
+    print_info "Persistence: Policies will survive reboots via configuration profile."
     print_info "To undo these changes, run:"
     echo "  sudo ./debloat-brave-macos.sh --channel ${CHANNEL} --restore"
+    echo "  sudo ./debloat-brave-macos.sh --channel ${CHANNEL} --uninstall"
     echo ""
     echo -e "${YELLOW}Note:${NC} You may see 'Managed by your organization' in Brave's menu."
     echo "      This is normal and expected when policy values are active."
@@ -412,18 +450,40 @@ restore_backup() {
 }
 
 uninstall_policies() {
-    if [[ ! -f "${MANAGED_PLIST}" ]]; then
-        print_info "No managed policies plist found for ${BRAVE_APP_NAME}. Nothing to remove."
+    local has_policies=false
+    if [[ -f "${MANAGED_PLIST}" ]]; then
+        has_policies=true
+    fi
+    if profiles show 2>/dev/null | grep -q "com.brave.debloat.profile"; then
+        has_policies=true
+    fi
+    
+    if [[ "$has_policies" != "true" ]]; then
+        print_info "No managed policies found for ${BRAVE_APP_NAME}. Nothing to remove."
         return
     fi
-    print_warn "This will remove ALL managed policies from ${BRAVE_APP_NAME}."
+    
+    print_warn "This will remove ALL managed policies and configuration profile from ${BRAVE_APP_NAME}."
     read -rp "Are you sure? [y/N]: " confirm
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
         print_info "Uninstall cancelled."
         return
     fi
+    
+    # Remove plist
     rm -f "${MANAGED_PLIST}"
     print_success "Removed managed policies plist."
+    
+    # Remove configuration profile
+    if profiles show 2>/dev/null | grep -q "com.brave.debloat.profile"; then
+        if profiles remove -identifier "com.brave.debloat.profile" 2>/dev/null; then
+            print_success "Removed configuration profile."
+        else
+            print_warn "Could not remove configuration profile via CLI."
+            print_info "Remove manually: System Settings > Privacy & Security > Profiles"
+        fi
+    fi
+    
     cleanup_user_prefs
     killall cfprefsd 2>/dev/null || true
     echo ""
@@ -461,6 +521,10 @@ CRITICAL: Brave boolean policies MUST be written to:
   /Library/Managed Preferences/<bundle-id>.plist
 Writing them via `defaults write` to the user plist with -bool causes
 Brave to crash on startup. This script uses the proper managed path.
+
+PERSISTENCE: On macOS 14+, raw plist files in /Library/Managed Preferences/
+are removed on reboot by mdmclient. This script installs a .mobileconfig
+profile (debloat-brave.mobileconfig) to ensure policies persist permanently.
 
 Note: --restore and --uninstall both require sudo because the managed
 policy file is owned by root.

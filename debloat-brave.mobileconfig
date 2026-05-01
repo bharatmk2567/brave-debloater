@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>PayloadContent</key>
+	<array>
+		<dict>
+			<key>PayloadContent</key>
+			<dict>
+				<key>com.brave.Browser</key>
+				<dict>
+					<key>BraveNewsDisabled</key>
+					<true/>
+					<key>BraveP3AEnabled</key>
+					<false/>
+					<key>BraveRewardsDisabled</key>
+					<true/>
+					<key>BraveSpeedreaderEnabled</key>
+					<false/>
+					<key>BraveStatsPingEnabled</key>
+					<false/>
+					<key>BraveTalkDisabled</key>
+					<true/>
+					<key>BraveVPNDisabled</key>
+					<true/>
+					<key>BraveWalletDisabled</key>
+					<true/>
+					<key>BraveWaybackMachineEnabled</key>
+					<false/>
+					<key>BraveWebDiscoveryEnabled</key>
+					<false/>
+					<key>MetricsReportingEnabled</key>
+					<false/>
+					<key>TorDisabled</key>
+					<true/>
+				</dict>
+			</dict>
+			<key>PayloadDescription</key>
+			<string>Disables non-core Brave features to mimic Brave Origin. Stays permanent across reboots.</string>
+			<key>PayloadDisplayName</key>
+			<string>Brave Browser Debloat</string>
+			<key>PayloadIdentifier</key>
+			<string>com.brave.debloat.managedprefs</string>
+			<key>PayloadOrganization</key>
+			<string>Brave Debloat</string>
+			<key>PayloadType</key>
+			<string>com.apple.ManagedClient.preferences</string>
+			<key>PayloadUUID</key>
+			<string>8A3C8F1B-5D4E-4A2B-9C1D-7E6F3A2B1C4D</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+		</dict>
+	</array>
+	<key>PayloadDescription</key>
+	<string>Brave Browser debloat configuration profile. Disables bloat features permanently across reboots.</string>
+	<key>PayloadDisplayName</key>
+	<string>Brave Browser Debloat</string>
+	<key>PayloadIdentifier</key>
+	<string>com.brave.debloat.profile</string>
+	<key>PayloadOrganization</key>
+	<string>Brave Debloat</string>
+	<key>PayloadRemovalDisallowed</key>
+	<false/>
+	<key>PayloadScope</key>
+	<string>System</string>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadUUID</key>
+	<string>7B2D7E0A-4C3D-3B1A-8B0C-6D5E492A0B3C</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+</dict>
+</plist>

@@ -42,7 +42,18 @@ These scripts are independent community tools that configure existing, officiall
 - macOS 10.14 or later
 - Brave Browser installed
 
-### Usage
+### Why Two Files?
+
+On **macOS 14+**, raw plist files in `/Library/Managed Preferences/` are removed on reboot by `mdmclient` unless delivered via a **configuration profile**. To solve this, we provide two files:
+
+| File | Purpose | Persistence |
+|------|---------|-------------|
+| `debloat-brave-macos.sh` | Script that applies policies **immediately** and installs the profile | Temporary (plist) + Permanent (profile) |
+| `debloat-brave.mobileconfig` | macOS configuration profile with all policies | **Permanent** — survives reboots |
+
+### Method 1: Script (Recommended)
+
+The script applies policies **right now** and automatically installs the `.mobileconfig` profile for permanence.
 
 1. **Close Brave completely** (Cmd+Q)
 2. Open Terminal and run:
@@ -50,20 +61,33 @@ These scripts are independent community tools that configure existing, officiall
 ```bash
 cd /path/to/this/folder
 chmod +x debloat-brave-macos.sh
-sudo ./debloat-brave-macos.sh              # Apply debloat
+sudo ./debloat-brave-macos.sh              # Apply debloat + install profile
 sudo ./debloat-brave-macos.sh --dry-run    # Preview changes only
 sudo ./debloat-brave-macos.sh --restore    # Restore from backup
-sudo ./debloat-brave-macos.sh --uninstall  # Remove all policies
+sudo ./debloat-brave-macos.sh --uninstall  # Remove all policies + profile
 ```
 
 3. Restart Brave and visit `brave://policy` to verify.
+
+### Method 2: Configuration Profile Only
+
+If you prefer not to run the script, you can install the profile directly:
+
+1. **Close Brave completely** (Cmd+Q)
+2. Double-click `debloat-brave.mobileconfig`
+3. Go to **System Settings > Privacy & Security > Profiles**
+4. Click **Install** and authenticate
+5. Restart Brave and visit `brave://policy` to verify
 
 ### Undo
 
 ```bash
 sudo ./debloat-brave-macos.sh --restore    # Pick a backup to restore
-sudo ./debloat-brave-macos.sh --uninstall  # Remove all policies directly
+sudo ./debloat-brave-macos.sh --uninstall  # Remove all policies + profile
 ```
+
+Or manually remove the profile:
+- **System Settings > Privacy & Security > Profiles > Brave Browser Debloat > Remove**
 
 ---
 
@@ -136,6 +160,8 @@ Writes managed policy preferences to `/Library/Managed Preferences/com.brave.Bro
 
 **CRITICAL:** On macOS, Brave boolean policies **must** be written to the managed preferences location with proper types via PlistBuddy. Writing them to the user plist via `defaults write -bool` causes Brave to crash on startup with `EXC_BREAKPOINT`. The script handles this correctly.
 
+**PERSISTENCE:** On **macOS 14+**, `mdmclient` removes raw plist files from `/Library/Managed Preferences/` on reboot unless they are delivered via a configuration profile. The script installs a `.mobileconfig` profile (`debloat-brave.mobileconfig`) to ensure policies survive reboots permanently. The profile uses the `com.apple.ManagedClient.preferences` payload type with Brave's bundle ID as the managed domain, which is the officially supported method for browser policy management on macOS.
+
 ### Windows
 Writes **Group Policy registry values** under `HKLM:\SOFTWARE\Policies\BraveSoftware\Brave`. This is the officially supported method to manage Brave in enterprise environments — it completely disables the targeted features rather than just hiding them.
 
@@ -191,4 +217,3 @@ AI tools may be used to assist with code review (e.g., catching syntax errors, s
 This project is **not affiliated with, endorsed by, or sponsored by** Brave Software, Inc. in any way.
 
 These scripts are independent community tools that configure existing, officially documented Group Policy settings. They do not modify, reverse-engineer, or redistribute any Brave software.
-

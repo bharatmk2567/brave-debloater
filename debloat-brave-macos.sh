@@ -308,34 +308,216 @@ apply_policies() {
     fi
 }
 
+generate_mobileconfig() {
+    local output_path="$1"
+    local bundle_id="$2"
+    
+    local policy_entries=""
+    local key value dtype
+    for entry in "${POLICIES[@]}"; do
+        IFS=':' read -r key dtype value <<< "$entry"
+        local plist_value
+        if [[ "$dtype" == "bool" ]]; then
+            if [[ "$value" == "true" ]]; then
+                plist_value="<true/>"
+            else
+                plist_value="<false/>"
+            fi
+        else
+            plist_value="<string>${value}</string>"
+        fi
+        policy_entries+="\t\t\t\t\t<key>${key}</key>\n${plist_value}\n"
+    done
+    
+    cat > "$output_path" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>PayloadContent</key>
+	<array>
+		<dict>
+			<key>PayloadContent</key>
+			<dict>
+				<key>${bundle_id}</key>
+				<dict>
+${policy_entries}				</dict>
+			</dict>
+			<key>PayloadDescription</key>
+			<string>Disables non-core Brave features to mimic Brave Origin. Stays permanent across reboots.</string>
+			<key>PayloadDisplayName</key>
+			<string>Brave Browser Debloat (${CHANNEL})</string>
+			<key>PayloadIdentifier</key>
+			<string>com.brave.debloat.managedprefs.${CHANNEL}</string>
+			<key>PayloadOrganization</key>
+			<string>Brave Debloat</string>
+			<key>PayloadType</key>
+			<string>com.apple.ManagedClient.preferences</string>
+			<key>PayloadUUID</key>
+			<string>$(uuidgen)</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+		</dict>
+	</array>
+	<key>PayloadDescription</key>
+	<string>Brave Browser debloat configuration profile. Disables bloat features permanently across reboots.</string>
+	<key>PayloadDisplayName</key>
+	<string>Brave Browser Debloat (${CHANNEL})</string>
+	<key>PayloadIdentifier</key>
+	<string>com.brave.debloat.profile.${CHANNEL}</string>
+	<key>PayloadOrganization</key>
+	<string>Brave Debloat</string>
+	<key>PayloadRemovalDisallowed</key>
+	<false/>
+	<key>PayloadScope</key>
+	<string>System</string>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadUUID</key>
+	<string>$(uuidgen)</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+</dict>
+</plist>
+EOF
+}
+
+setup_launchdaemon() {
+    local persist_script="/usr/local/bin/brave-debloat-persist-${BROWSER_BUNDLE_ID}.sh"
+    local launchdaemon_plist="/Library/LaunchDaemons/com.brave.debloat.${BROWSER_BUNDLE_ID}.plist"
+    
+    cat > "$persist_script" << 'PERSISTEOF'
+#!/usr/bin/env bash
+BROWSER_BUNDLE_ID="PLACEHOLDER_BUNDLE_ID"
+MANAGED_PLIST="/Library/Managed Preferences/${BROWSER_BUNDLE_ID}.plist"
+
+create_empty_plist() {
+    local target="$1"
+    printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' '<plist version="1.0">' '<dict>' '</dict>' '</plist>' > "${target}"
+    chmod 644 "${target}"
+    chown root:wheel "${target}"
+}
+
+if [[ ! -f "${MANAGED_PLIST}" ]]; then
+    mkdir -p "/Library/Managed Preferences"
+    create_empty_plist "${MANAGED_PLIST}"
+fi
+
+# Apply policies
+PERSISTEOF
+
+    sed -i '' "s/PLACEHOLDER_BUNDLE_ID/${BROWSER_BUNDLE_ID}/g" "$persist_script"
+
+    local key value dtype
+    for entry in "${POLICIES[@]}"; do
+        IFS=':' read -r key dtype value <<< "$entry"
+        echo "/usr/libexec/PlistBuddy -c \"Delete :${key}\" \"\${MANAGED_PLIST}\" 2>/dev/null || true" >> "$persist_script"
+        echo "/usr/libexec/PlistBuddy -c \"Add :${key} ${dtype} ${value}\" \"\${MANAGED_PLIST}\" 2>/dev/null || true" >> "$persist_script"
+    done
+
+    cat >> "$persist_script" << 'PERSISTEOF'
+chmod 644 "${MANAGED_PLIST}"
+chown root:wheel "${MANAGED_PLIST}"
+PERSISTEOF
+
+    chmod +x "$persist_script"
+    chown root:wheel "$persist_script"
+
+    cat > "$launchdaemon_plist" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.brave.debloat.${BROWSER_BUNDLE_ID}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>${persist_script}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>300</integer>
+    <key>StandardOutPath</key>
+    <string>/var/log/brave-debloat-persist.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/brave-debloat-persist.log</string>
+</dict>
+</plist>
+EOF
+
+    chmod 644 "$launchdaemon_plist"
+    chown root:wheel "$launchdaemon_plist"
+    
+    if launchctl list "com.brave.debloat.${BROWSER_BUNDLE_ID}" &>/dev/null; then
+        launchctl unload "$launchdaemon_plist" 2>/dev/null || true
+    fi
+    launchctl load "$launchdaemon_plist" 2>/dev/null || launchctl bootstrap system "$launchdaemon_plist" 2>/dev/null || true
+    
+    print_success "LaunchDaemon installed for persistence across reboots."
+    print_info "Daemon will recreate policies at boot and check every 5 minutes."
+}
+
+remove_persistence() {
+    local launchdaemon_plist="/Library/LaunchDaemons/com.brave.debloat.${BROWSER_BUNDLE_ID}.plist"
+    local persist_script="/usr/local/bin/brave-debloat-persist-${BROWSER_BUNDLE_ID}.sh"
+    
+    if [[ -f "$launchdaemon_plist" ]]; then
+        launchctl unload "$launchdaemon_plist" 2>/dev/null || launchctl bootout system/"com.brave.debloat.${BROWSER_BUNDLE_ID}" 2>/dev/null || true
+        rm -f "$launchdaemon_plist"
+        print_success "Removed LaunchDaemon."
+    fi
+    
+    if [[ -f "$persist_script" ]]; then
+        rm -f "$persist_script"
+    fi
+    
+    local old_profile_id="com.brave.debloat.profile"
+    local new_profile_id="com.brave.debloat.profile.${CHANNEL}"
+    
+    if profiles show 2>/dev/null | grep -q "$old_profile_id"; then
+        profiles remove -identifier "$old_profile_id" 2>/dev/null || true
+    fi
+    if profiles show 2>/dev/null | grep -q "$new_profile_id"; then
+        profiles remove -identifier "$new_profile_id" 2>/dev/null || true
+    fi
+}
+
 install_profile() {
-    local script_dir="$(cd "$(dirname "$0")" && pwd)"
-    local profile_path="${script_dir}/debloat-brave.mobileconfig"
+    local tmp_dir
+    tmp_dir="$(mktemp -d)"
+    local profile_path="${tmp_dir}/brave-debloat-${CHANNEL}.mobileconfig"
     
-    if [[ ! -f "$profile_path" ]]; then
-        print_warn "Configuration profile not found at: $profile_path"
-        print_info "Policies applied but may not persist after reboot."
-        print_info "To make permanent, copy debloat-brave.mobileconfig to the same directory as this script."
-        return 1
+    generate_mobileconfig "$profile_path" "$BROWSER_BUNDLE_ID"
+    
+    local old_profile_id="com.brave.debloat.profile"
+    local new_profile_id="com.brave.debloat.profile.${CHANNEL}"
+    
+    if profiles show 2>/dev/null | grep -q "$old_profile_id"; then
+        print_info "Removing old profile..."
+        profiles remove -identifier "$old_profile_id" 2>/dev/null || true
     fi
-    
-    # Remove existing profile if present
-    if profiles show 2>/dev/null | grep -q "com.brave.debloat.profile"; then
+    if profiles show 2>/dev/null | grep -q "$new_profile_id"; then
         print_info "Removing existing profile..."
-        profiles remove -identifier "com.brave.debloat.profile" 2>/dev/null || true
+        profiles remove -identifier "$new_profile_id" 2>/dev/null || true
     fi
     
+    local profile_installed=false
     if profiles install -path "$profile_path" 2>/dev/null; then
         print_success "Configuration profile installed successfully."
         print_success "Policies will persist across reboots."
-        return 0
+        profile_installed=true
     else
         print_warn "Could not install configuration profile via CLI."
-        print_info "You can install it manually:"
-        print_info "  1. Open System Settings > Privacy & Security > Profiles"
-        print_info "  2. Double-click: $profile_path"
-        print_info "  3. Click 'Install' and authenticate"
-        return 1
+        print_info "This is normal on macOS 13+ without MDM enrollment."
+    fi
+    
+    rm -rf "$tmp_dir"
+    
+    if [[ "$profile_installed" != "true" ]]; then
+        print_info "Falling back to LaunchDaemon for persistence..."
+        setup_launchdaemon
     fi
 }
 
@@ -369,7 +551,7 @@ print_summary() {
     echo "You can verify policies are active by visiting:"
     echo "  brave://policy"
     echo ""
-    print_info "Persistence: Policies will survive reboots via configuration profile."
+    print_info "Persistence: Policies will survive reboots via profile or LaunchDaemon."
     print_info "To undo these changes, run:"
     echo "  sudo ./debloat-brave-macos.sh --channel ${CHANNEL} --restore"
     echo "  sudo ./debloat-brave-macos.sh --channel ${CHANNEL} --uninstall"
@@ -425,13 +607,12 @@ restore_backup() {
             print_success "Restored managed plist preferences."
             restored=true
         else
-            # Backup was made for this channel but no managed plist existed at backup time —
-            # remove the current managed plist to restore that "no policies" state.
             if [[ -f "${MANAGED_PLIST}" ]]; then
                 rm -f "${MANAGED_PLIST}"
                 print_success "Removed managed policies (none existed at backup time)."
                 restored=true
             fi
+            remove_persistence
         fi
         if [[ -f "${restore_path}/${BROWSER_BUNDLE_ID}.plist" ]]; then
             cp "${restore_path}/${BROWSER_BUNDLE_ID}.plist" "${USER_PLIST}"
@@ -457,32 +638,29 @@ uninstall_policies() {
     if profiles show 2>/dev/null | grep -q "com.brave.debloat.profile"; then
         has_policies=true
     fi
+    if profiles show 2>/dev/null | grep -q "com.brave.debloat.profile.${CHANNEL}"; then
+        has_policies=true
+    fi
+    if [[ -f "/Library/LaunchDaemons/com.brave.debloat.${BROWSER_BUNDLE_ID}.plist" ]]; then
+        has_policies=true
+    fi
     
     if [[ "$has_policies" != "true" ]]; then
         print_info "No managed policies found for ${BRAVE_APP_NAME}. Nothing to remove."
         return
     fi
     
-    print_warn "This will remove ALL managed policies and configuration profile from ${BRAVE_APP_NAME}."
+    print_warn "This will remove ALL managed policies and persistence mechanisms from ${BRAVE_APP_NAME}."
     read -rp "Are you sure? [y/N]: " confirm
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
         print_info "Uninstall cancelled."
         return
     fi
     
-    # Remove plist
     rm -f "${MANAGED_PLIST}"
     print_success "Removed managed policies plist."
     
-    # Remove configuration profile
-    if profiles show 2>/dev/null | grep -q "com.brave.debloat.profile"; then
-        if profiles remove -identifier "com.brave.debloat.profile" 2>/dev/null; then
-            print_success "Removed configuration profile."
-        else
-            print_warn "Could not remove configuration profile via CLI."
-            print_info "Remove manually: System Settings > Privacy & Security > Profiles"
-        fi
-    fi
+    remove_persistence
     
     cleanup_user_prefs
     killall cfprefsd 2>/dev/null || true
@@ -523,8 +701,9 @@ Writing them via `defaults write` to the user plist with -bool causes
 Brave to crash on startup. This script uses the proper managed path.
 
 PERSISTENCE: On macOS 14+, raw plist files in /Library/Managed Preferences/
-are removed on reboot by mdmclient. This script installs a .mobileconfig
-profile (debloat-brave.mobileconfig) to ensure policies persist permanently.
+are removed on reboot by mdmclient. This script generates and installs a
+channel-specific .mobileconfig profile, or falls back to a LaunchDaemon if
+profile installation is unavailable, to ensure policies persist permanently.
 
 Note: --restore and --uninstall both require sudo because the managed
 policy file is owned by root.

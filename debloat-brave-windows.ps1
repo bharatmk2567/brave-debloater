@@ -107,7 +107,7 @@ function Test-BraveRunning {
     return ($null -ne $proc)
 }
 
-function Run-Interactive {
+function Invoke-Interactive {
     Write-Host ""
     Write-Host "Interactive Mode" -ForegroundColor Cyan
     Write-Host "Choose which features to disable. Press Enter to accept the default [Y/n]."
@@ -142,6 +142,31 @@ function Run-Interactive {
     Write-Host ""
 }
 
+function Convert-PsPathToRegExe {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$PsPath
+    )
+
+    # 1. Strip the PowerShell provider prefix if present (e.g., 'Registry::')
+    $cleanPath = $PsPath -replace '^Registry::', ''
+
+    # 2. Normalize forward slashes to backslashes
+    $cleanPath = $cleanPath -replace '/', '\'
+
+    # 3. Use Regex mapping to swap PowerShell drive letters with standard reg.exe hives
+    switch -regex ($cleanPath) {
+        '^HKLM:?\\?|^HKEY_LOCAL_MACHINE\\?'  { $cleanPath = $cleanPath -replace '^HKLM:?\\?|^HKEY_LOCAL_MACHINE\\?', 'HKLM\'; break }
+        '^HKCU:?\\?|^HKEY_CURRENT_USER\\?'   { $cleanPath = $cleanPath -replace '^HKCU:?\\?|^HKEY_CURRENT_USER\\?', 'HKCU\'; break }
+        '^HKCR:?\\?|^HKEY_CLASSES_ROOT\\?'   { $cleanPath = $cleanPath -replace '^HKCR:?\\?|^HKEY_CLASSES_ROOT\\?', 'HKCR\'; break }
+        '^HKU:?\\?|^HKEY_USERS\\?'           { $cleanPath = $cleanPath -replace '^HKU:?\\?|^HKEY_USERS\\?', 'HKU\'; break }
+        '^HKCC:?\\?|^HKEY_CURRENT_CONFIG\\?' { $cleanPath = $cleanPath -replace '^HKCC:?\\?|^HKEY_CURRENT_CONFIG\\?', 'HKCC\'; break }
+    }
+
+    # Trim any trailing backslashes
+    return $cleanPath.TrimEnd('\')
+}
+
 function Backup-Registry {
     if (-not (Test-Path $RegPath)) {
         Write-Host "   No existing policies to backup." -ForegroundColor DarkGray
@@ -152,17 +177,17 @@ function Backup-Registry {
     New-Item -ItemType Directory -Path $backupPath -Force | Out-Null
 
     $regFile = Join-Path $backupPath "brave-policies-backup.reg"
-    $cmd = "reg.exe export `"HKLM\SOFTWARE\Policies\BraveSoftware\Brave`" `"$regFile`" /y 2>&1"
-    $output = Invoke-Expression $cmd
+    $RegInfoPath = Convert-PsPathToRegExe $RegPath
+    reg.exe export "$RegInfoPath" "$regFile" /y 2>&1 | Out-Null
 
-    if (Test-Path $regFile) {
+    if ($LASTEXITCODE -eq 0) {
         Write-Host "   [OK] Backed up existing policies to: $regFile" -ForegroundColor Green
     } else {
         Write-Host "   [!] Could not export registry backup. Proceeding anyway..." -ForegroundColor Yellow
     }
 }
 
-function Apply-Policies {
+function Set-Policies {
     param([switch]$DryRun)
 
     if ($DryRun) {
@@ -395,11 +420,11 @@ if (Test-BraveRunning) {
 Write-Host "[OK] Brave Browser is not running." -ForegroundColor Green
 
 if ($Interactive) {
-    Run-Interactive
+    Invoke-Interactive
     Write-Host "Creating backup of existing policies..." -ForegroundColor Cyan
     New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
     Backup-Registry
-    Apply-Policies
+    Set-Policies
     Show-Summary
     exit 0
 }
@@ -411,7 +436,7 @@ if ($DryRun) {
             $Policies[$policy.Key] = $policy.Value
         }
     }
-    Apply-Policies -DryRun
+    Set-Policies -DryRun
     exit 0
 }
 
@@ -426,5 +451,5 @@ Write-Host "Creating backup of existing policies..." -ForegroundColor Cyan
 New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
 Backup-Registry
 
-Apply-Policies
+Set-Policies
 Show-Summary
